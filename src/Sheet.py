@@ -1,3 +1,4 @@
+from pkg_resources import yield_lines
 import cv2
 import numpy as np
 from src.util import to_images
@@ -8,6 +9,31 @@ kRatio = 3
 class Sheet:
   # Page class.
   class Page:
+    # Baseline:
+    class Baseline:
+      class Lyrics:
+        def __init__(self, master):
+          self.master = master
+
+        # TODO: avoid duplicate code -> use inheritance!
+        def set_lower_bound(self, lb):
+          self.lb = lb
+
+      def __init__(self, master, y):
+        self.master = master
+        self.y = y
+        self.lyrics = self.Lyrics(self)
+
+      def __str__(self):
+        return f'y = {self.y}'
+
+      def set_lower_bound(self, lb):
+        self.lb = lb
+
+      def set_upper_bound(self, ub):
+        self.ub = ub
+
+    # Constructor.
     def __init__(self, master, image):
       self.master = master
       self.image = image
@@ -18,6 +44,7 @@ class Sheet:
       output = cv2.connectedComponentsWithStats(self.thresh, 8, cv2.CV_32S)
       (_, _, self.ccs, self.centroids) = output
 
+    # Compute the horizontal projection of connected components with `w / h` < `ratio`. 
     def compute_horizontal_projection(self, ratio=kRatio):
       hs = np.zeros(self.master.shape[1] + 1)
 
@@ -32,55 +59,163 @@ class Sheet:
       hs /= self.master.oligon_width
       return hs
 
-    def filter_projection(self, fn):
-      hs = fn()
-      return hs
-
-    def get_peaks(self, xs):
+    # Get min peaks.
+    @staticmethod
+    def get_max_peaks(xs):
       from scipy.signal import find_peaks
       peaks, _ = find_peaks(xs, height=0)
+      return peaks
+    
+    # Get max peaks.
+    @staticmethod
+    def get_min_peaks(xs):
+      from scipy.signal import find_peaks
+      peaks, _ = find_peaks(-xs)
+      return peaks
 
-      peaks = peaks[np.where(xs[peaks] > 0.8)]
+    # Compute baselines.
+    def compute_neumes_baselines(self):
+      hs = self.compute_horizontal_projection()
+      peaks = self.get_max_peaks(hs)
+      
+      # Extract only peaks which correspond to baselines.
+      peaks = peaks[np.where(hs[peaks] > 0.8)]
       new_peaks = []
       index = 0
       while index < len(peaks):
         ptr = index + 1
         argmax = index
         while ptr < len(peaks) and peaks[ptr] - peaks[index] <= self.master.oligon_width:
-          if xs[peaks[ptr]] > xs[peaks[argmax]]:
+          if hs[peaks[ptr]] > hs[peaks[argmax]]:
             argmax = ptr
           ptr += 1
         new_peaks.append(peaks[argmax])
         index = ptr
-      return np.array(new_peaks)
 
-    def compute_baselines(self):
-      hs = self.filter_projection(self.compute_horizontal_projection)
-      indices = self.get_peaks(hs)
+      # Reigster all baselines.
+      self.neumes_baselines = []
+      for nb in new_peaks:
+        self.neumes_baselines.append(self.Baseline(self, nb))
+      return
+
+    # Plot the baselines.
+    def plot_neumes_baselines(self):
+      import matplotlib.pyplot as plt
+      import matplotlib.patches as patches
+
+      # Create figure and axes
+      fig, ax = plt.subplots(figsize=(self.height / 10, self.width / 10))
+
+      # Display the image
+      ax.imshow(self.image)
+
+      self.compute_neumes_baselines()
+      for index, nb in enumerate(self.neumes_baselines):
+        rect = patches.Rectangle((0, max(0, nb.y - self.master.oligon_height / 2)), self.master.shape[0], self.master.oligon_height, linewidth=2.5, edgecolor='purple', facecolor='none', label=f'{index}')
+        ax.add_patch(rect)
+        rx, ry = rect.get_xy()
+        cx = rx + rect.get_width() / 2.0
+        cy = ry + rect.get_height() / 2.0
+        ax.annotate(f'{index}', (cx, cy), color='green', weight='bold', fontsize=16, ha='center', va='center')
+      plt.show()
+
+    # Compute the horizontal projetion, by considering all connected componets.
+    def compute_raw_horizontal_projection(self):
+      return np.sum(self.thresh, axis=1) / 255
       
-      baselines = []
-      for i in range(len(indices)):
-        if not i:
-          baselines.append(indices[i])
-          continue
-        assert len(baselines)
+    # Plot the horizontal projetion, by considering all connected componets.
+    def plot_raw_horizontal_projection(self):
+      import matplotlib.pyplot as plt
+      f = plt.figure()
+      f.set_figwidth(50)
+      f.set_figheight(10)
 
-        # Far apart?
-        if indices[i] - baselines[-1] > 4 * self.master.oligon_height:
-          baselines.append(indices[i])
-          continue
-        
-        # Check which one to take.
-        if hs[baselines[-1]] > hs[indices[i]]:
-          continue
+      hs = self.compute_raw_horizontal_projection()
+      self.compute_neumes_baselines()
+      for nb in self.neumes_baselines:
+        plt.plot([nb.y], [hs[nb.y]], marker='o', markersize=15, color="red")
+      plt.plot(hs, color='black')
 
-        # Replace the last baseline.
-        baselines[-1] = indices[i]
-      return baselines
+    # TODO: this is not so clean. We shouldn't record the neumes baselines in a function with a different name.
+    def compute_full_baselines(self):
+      # First compute the neumes baselines.
+      self.compute_neumes_baselines()
 
+      # Compute the raw horizontal projection.
+      rhp = self.compute_raw_horizontal_projection()
+
+      print([str(nb) for nb in self.neumes_baselines])
+
+      def interpolate(b1, b2):
+        print(f'b1={str(b1)}')
+        print(f'b2={str(b2)}')
+        assert b1.y < b2.y
+        fst_pos = b2.y - np.argmax(rhp[b1.y : b2.y][::-1] == 0)
+
+        # TODO: take the one closest to the center.
+        mid = b1.y + (b2.y - b1.y) / 2
+        print(f'fst_pos={fst_pos} mid={mid}')
+        assert fst_pos >= mid
+
+        b2.set_lower_bound(fst_pos)
+        while fst_pos >= b1.y and rhp[fst_pos] == 0:
+          fst_pos -= 1
+        fst_pos += 1
+
+        # TODO: take the smallest min before the greatest max (which shouldn't be the baseline itself)
+        # For that, make sure that we take a local maximum, which is *at least* oligon_height apart from us.
+
+        max_peaks = self.get_max_peaks(rhp[b1.y : fst_pos]) + b1.y
+        min_peaks = self.get_min_peaks(rhp[b1.y : fst_pos]) + b1.y
+
+        print(f'max_peaks={max_peaks}, values={rhp[max_peaks]}')
+        print(f'min_peaks={min_peaks}, values={rhp[min_peaks]}')
+
+        snd_pos = b1.y + np.argmin(rhp[b1.y : fst_pos])
+
+        print(f'snd_pos={snd_pos}')
+
+        b1.lyrics.set_lower_bound(snd_pos)
+
+      for i in range(1, len(self.neumes_baselines)):
+        interpolate(self.neumes_baselines[i - 1], self.neumes_baselines[i])
+      # TODO: we could do better here.
+      self.neumes_baselines[0].set_lower_bound(0)
+      self.neumes_baselines[-1].set_upper_bound(self.height)
+      self.neumes_baselines[-1].lyrics.set_lower_bound(self.height)
+
+    def plot_full_baselines(self):
+      import matplotlib.pyplot as plt
+      import matplotlib.patches as patches
+
+      # Create figure and axes
+      fig, ax = plt.subplots(figsize=(self.height / 10, self.width / 10))
+
+      # Display the image
+      ax.imshow(self.image)
+
+      self.compute_full_baselines()
+      for index, nb in enumerate(self.neumes_baselines):
+        rect = patches.Rectangle((0, nb.lb), self.master.shape[0], nb.ub - nb.lb, linewidth=2.5, edgecolor='purple', facecolor='none', label=f'{index}')
+        ax.add_patch(rect)
+        rx, ry = rect.get_xy()
+        cx = rx + rect.get_width() / 2.0
+        cy = ry + rect.get_height() / 2.0
+        ax.annotate(f'neumes: {index}', (cx, cy), color='green', weight='bold', fontsize=16, ha='center', va='center')
+      
+      for index, nb in enumerate(self.neumes_baselines):
+        rect = patches.Rectangle((10, nb.lyrics.lb), self.master.shape[0] - 10, nb.ub - nb.lyrics.lb, linewidth=2.5, edgecolor='orange', facecolor='none', label=f'{index}')
+        ax.add_patch(rect)
+        rx, ry = rect.get_xy()
+        cx = rx + rect.get_width() / 2.0
+        cy = ry + rect.get_height() / 2.0
+        ax.annotate(f'lyrics: {index}', (cx, cy), color='green', weight='bold', fontsize=16, ha='center', va='center')
+      plt.show()
+
+    # Compute zero ranges.
     def compute_zero_ranges(self):
-      self.thresh[self.thresh == 255] = 1
-      hs = np.sum(self.thresh, axis=1)
+      # self.thresh[self.thresh == 255] = 1
+      hs = np.sum(self.thresh, axis=1) / 255
       # num_occ_oligon = int(np.ceil(self.master.shape[0] / self.master.oligon_width))
       hs[hs < 1] = 0
 
@@ -106,32 +241,16 @@ class Sheet:
         add_range(len(hs), -1)
       return ranges   
 
-    def plot_raw_horizontal_projection(self):
+    def plot_horizontal_projection(self, ratio=kRatio):
       import matplotlib.pyplot as plt
       f = plt.figure()
       f.set_figwidth(50)
       f.set_figheight(10)
 
-      self.thresh[self.thresh == 255] = 1
-      hs = np.sum(self.thresh, axis=1)
-      num_occ_oligon = int(np.ceil(self.master.shape[0] / self.master.oligon_width))
-      hs[hs < num_occ_oligon] = 0
-      non_zero_indices = np.where(hs > 0)[0]
-      test = np.zeros(hs.shape)
-      test[non_zero_indices] = 1
-      plt.plot(test, color='black')
-
-    def plot_horizontal_projection(self):
-      import matplotlib.pyplot as plt
-      f = plt.figure()
-      f.set_figwidth(50)
-      f.set_figheight(10)
-
-      hs = self.filter_projection(self.compute_horizontal_projection)
-      indices = self.get_peaks(hs)
-      print(indices)
-      for index in indices:
-        plt.plot([index], [hs[index]], marker='o', markersize=15, color="red")
+      hs = self.compute_horizontal_projection(ratio=ratio)
+      self.compute_neumes_baselines()
+      for nb in self.neumes_baselines:
+        plt.plot([nb.y], [hs[nb.y]], marker='o', markersize=15, color="red")
       plt.plot(hs, color='black')
 
     def plot_ranges(self):
@@ -154,26 +273,7 @@ class Sheet:
         ax.annotate(f'{index}', (cx, cy), color='green', weight='bold', fontsize=16, ha='center', va='center')
       plt.show()
 
-    def plot_baselines(self):
-      import matplotlib.pyplot as plt
-      import matplotlib.patches as patches
-
-      # Create figure and axes
-      fig, ax = plt.subplots(figsize=(self.height / 10, self.width / 10))
-
-      # Display the image
-      ax.imshow(self.image)
-
-      hs = self.compute_baselines()
-      for index, h in enumerate(hs):
-        rect = patches.Rectangle((0, h), self.master.shape[0], 2 * self.master.oligon_height, linewidth=2.5, edgecolor='purple', facecolor='none', label=f'{index}')
-        ax.add_patch(rect)
-        rx, ry = rect.get_xy()
-        cx = rx + rect.get_width() / 2.0
-        cy = ry + rect.get_height() / 2.0
-        ax.annotate(f'{index}', (cx, cy), color='green', weight='bold', fontsize=16, ha='center', va='center')
-      plt.show()
-
+    # Plot the page with all its connected components (could be filtered).
     def plot_ccs(self, ratio=kRatio):
       import matplotlib.pyplot as plt
       import matplotlib.patches as patches
