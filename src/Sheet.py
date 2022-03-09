@@ -1,3 +1,4 @@
+from turtle import right
 from pkg_resources import yield_lines
 import cv2
 import numpy as np
@@ -165,11 +166,25 @@ class Sheet:
         # TODO: take the smallest min before the greatest max (which shouldn't be the baseline itself)
         # For that, make sure that we take a local maximum, which is *at least* oligon_height apart from us.
 
-        max_peaks = self.get_max_peaks(rhp[b1.y : fst_pos]) + b1.y
-        min_peaks = self.get_min_peaks(rhp[b1.y : fst_pos]) + b1.y
+        max_peaks = b1.y + self.get_max_peaks(rhp[b1.y : fst_pos])
+        min_peaks = b1.y + self.get_min_peaks(rhp[b1.y : fst_pos])
+        rightmost_max_index = max_peaks[len(max_peaks) - np.argmax(rhp[max_peaks][::-1]) - 1]
+        print(f'rightmost_max_index={rightmost_max_index}')
 
         print(f'max_peaks={max_peaks}, values={rhp[max_peaks]}')
         print(f'min_peaks={min_peaks}, values={rhp[min_peaks]}')
+
+        min_peaks = min_peaks[min_peaks > b1.y + self.master.oligon_height]
+        max_peaks = max_peaks[max_peaks > b1.y + self.master.oligon_height]
+        print(f'! max={max_peaks}')
+        print(f'! min={min_peaks}')
+        print(f'! rhp_max={rhp[max_peaks]}')
+        print(f'! rhp_min={rhp[min_peaks]}')
+
+
+        aux_max_peaks = self.get_max_peaks(rhp[max_peaks])
+        aux_min_peaks = self.get_min_peaks(rhp[min_peaks])
+        print(f'max_aux={aux_max_peaks}, min_aux={aux_min_peaks}')
 
         snd_pos = b1.y + np.argmin(rhp[b1.y : fst_pos])
 
