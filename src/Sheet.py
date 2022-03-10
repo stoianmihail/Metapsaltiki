@@ -16,6 +16,9 @@ class Sheet:
         def __init__(self, master):
           self.master = master
 
+        def set_coordinate(self, y):
+          self.y = y
+
         # TODO: avoid duplicate code -> use inheritance!
         def set_lower_bound(self, lb):
           self.lb = lb
@@ -75,12 +78,21 @@ class Sheet:
       return peaks
 
     # Compute baselines.
-    def compute_neumes_baselines(self):
+    def compute_neumes_baselines(self, theta=0.8):
       hs = self.compute_horizontal_projection()
       peaks = self.get_max_peaks(hs)
       
       # Extract only peaks which correspond to baselines.
-      peaks = peaks[np.where(hs[peaks] > 0.8)]
+      # TODO: this is not the method specified in the paper
+      # TODO: we should first take the maximum within an interval of oligon_width.
+      peaks = peaks[np.where(hs[peaks] > theta)]
+
+      # for peak in peaks:
+      #   print(f'remain={peaks[(peak <= peaks) & (peaks < peak + self.master.oligon_width)]}')
+      #   window = peaks[(peak <= peaks) & (peaks < peak + self.master.oligon_width)]
+      #   arg = window[np.argmax(hs[window])]
+      #   print(f'arg={arg}')
+
       new_peaks = []
       index = 0
       while index < len(peaks):
@@ -133,8 +145,13 @@ class Sheet:
 
       hs = self.compute_raw_horizontal_projection()
       self.compute_neumes_baselines()
-      for nb in self.neumes_baselines:
-        plt.plot([nb.y], [hs[nb.y]], marker='o', markersize=15, color="red")
+
+      for index in range(len(self.neumes_baselines)):
+        y = self.neumes_baselines[index].y
+        plt.plot([y], [hs[y]], marker='o', markersize=15, color="red")
+        if index:
+          mid = (self.neumes_baselines[index].y + self.neumes_baselines[index - 1].y) / 2
+          plt.axvline(x = mid)
       plt.plot(hs, color='black')
 
     # TODO: this is not so clean. We shouldn't record the neumes baselines in a function with a different name.
@@ -147,53 +164,77 @@ class Sheet:
 
       print([str(nb) for nb in self.neumes_baselines])
 
-      def interpolate(b1, b2):
-        print(f'b1={str(b1)}')
-        print(f'b2={str(b2)}')
-        assert b1.y < b2.y
-        fst_pos = b2.y - np.argmax(rhp[b1.y : b2.y][::-1] == 0)
+      # def interpolate(b1, b2):
+      #   print(f'b1={str(b1)}')
+      #   print(f'b2={str(b2)}')
+      #   assert b1.y < b2.y
+      #   fst_pos = b2.y - np.argmax(rhp[b1.y : b2.y][::-1] == 0)
 
-        # TODO: take the one closest to the center.
+      #   # TODO: take the one closest to the center.
+      #   mid = b1.y + (b2.y - b1.y) / 2
+      #   print(f'fst_pos={fst_pos} mid={mid}')
+      #   assert fst_pos >= mid
+
+      #   b2.set_lower_bound(fst_pos)
+      #   b1.set_upper_bound(fst_pos)
+
+      #   while fst_pos >= b1.y and rhp[fst_pos] == 0:
+      #     fst_pos -= 1
+      #   fst_pos += 1
+
+      #   # TODO: take the smallest min before the greatest max (which shouldn't be the baseline itself)
+      #   # For that, make sure that we take a local maximum, which is *at least* oligon_height apart from us.
+
+      #   # TODO: should we start directly with `b1.y + self.master.oligon_height` and then find the maxs?
+      #   # If so, pay attention to also add `b1.y + self.master.oligon_height`
+      #   max_peaks = b1.y + self.get_max_peaks(rhp[b1.y : fst_pos])
+      #   max_peaks = max_peaks[max_peaks > b1.y + self.master.oligon_height]
+        
+      #   print(f'! max={max_peaks}')
+      #   print(f'! rhp_max={rhp[max_peaks]}')
+        
+      #   rightmost_max_index = max_peaks[last_arg(max_peaks, np.argmax)]
+
+      #   # rightmost_min_before_max_index = min_peaks
+      #   print(f'rightmost_max_index={rightmost_max_index}')
+
+      #   safe_start_position = b1.y + self.master.oligon_height
+      #   rightmost_min_index = safe_start_position + last_arg(rhp[safe_start_position : rightmost_max_index], np.argmin)
+
+      #   print(f'rm_min_index={rightmost_min_index}')
+
+      #   b1.lyrics.set_lower_bound(rightmost_min_index)
+
+      def find_lyrics(b1, b2):
         mid = b1.y + (b2.y - b1.y) / 2
-        print(f'fst_pos={fst_pos} mid={mid}')
-        assert fst_pos >= mid
+        max_peaks = b1.y + self.get_max_peaks(rhp[b1.y : b2.y])
+        mask = (b1.y + self.master.oligon_height <= max_peaks) & (max_peaks <= mid)
+        max_peaks = max_peaks[mask]
 
-        b2.set_lower_bound(fst_pos)
-        b1.set_upper_bound(fst_pos)
+        print(f'b1.y={b1.y}, b2.y={b2.y}, mid={mid}, max_peaks={max_peaks}, values={rhp[max_peaks]}')
+        ind = np.argpartition(rhp[max_peaks], -2)[-2:]
+        print(f'ind={ind}')
 
-        while fst_pos >= b1.y and rhp[fst_pos] == 0:
-          fst_pos -= 1
-        fst_pos += 1
+        # TODO: what if `len(ind) == 1`?
+        assert len(ind) == 2
+        max1, max2 = max_peaks[ind]
 
-        # TODO: take the smallest min before the greatest max (which shouldn't be the baseline itself)
-        # For that, make sure that we take a local maximum, which is *at least* oligon_height apart from us.
-
-        # TODO: should we start directly with `b1.y + self.master.oligon_height` and then find the maxs?
-        # If so, pay attention to also add `b1.y + self.master.oligon_height`
-        max_peaks = b1.y + self.get_max_peaks(rhp[b1.y : fst_pos])
-        max_peaks = max_peaks[max_peaks > b1.y + self.master.oligon_height]
+        print(f'max1={max1}, max2={max2}')
+        b1.lyrics.set_coordinate(max1 + (max2 - max1) / 2)
         
-        print(f'! max={max_peaks}')
-        print(f'! rhp_max={rhp[max_peaks]}')
-        
-        rightmost_max_index = max_peaks[last_arg(max_peaks, np.argmax)]
-
-        # rightmost_min_before_max_index = min_peaks
-        print(f'rightmost_max_index={rightmost_max_index}')
-
-        safe_start_position = b1.y + self.master.oligon_height
-        rightmost_min_index = safe_start_position + last_arg(rhp[safe_start_position : rightmost_max_index], np.argmin)
-
-        print(f'rm_min_index={rightmost_min_index}')
-
-        b1.lyrics.set_lower_bound(rightmost_min_index)
-
+      # TODO: could go wrong, when the end of sentence is really short!
+      # TODO: and we also have page numbers.
+      self.neumes_baselines.append(self.Baseline(self, self.height))
       for i in range(1, len(self.neumes_baselines)):
-        interpolate(self.neumes_baselines[i - 1], self.neumes_baselines[i])
-      # TODO: we could do better here.
-      self.neumes_baselines[0].set_lower_bound(0)
-      self.neumes_baselines[-1].set_upper_bound(self.height)
-      self.neumes_baselines[-1].lyrics.set_lower_bound(self.height)
+        find_lyrics(self.neumes_baselines[i - 1], self.neumes_baselines[i])
+      self.neumes_baselines.pop()
+      # TODO: infer from other pages, what the distance to the lyrics is.
+      # TODO: or apply other heuristic, e.g., infer the center and get the 2 maximums
+      # self.neumes_baselines[-1].lyrics.set_coordinate(self.height)
+      # # TODO: we could do better here.
+      # self.neumes_baselines[0].set_lower_bound(0)
+      # self.neumes_baselines[-1].set_upper_bound(self.height)
+      # self.neumes_baselines[-1].lyrics.set_lower_bound(self.height)
 
     def plot_full_baselines(self):
       import matplotlib.pyplot as plt
@@ -207,7 +248,7 @@ class Sheet:
 
       self.compute_full_baselines()
       for index, nb in enumerate(self.neumes_baselines):
-        rect = patches.Rectangle((0, nb.lb), self.master.shape[0], nb.ub - nb.lb, linewidth=2.5, edgecolor='purple', facecolor='none', label=f'{index}')
+        rect = patches.Rectangle((0, nb.y), self.master.shape[0], 2.5, linewidth=2.5, edgecolor='purple', facecolor='none', label=f'{index}')
         ax.add_patch(rect)
         rx, ry = rect.get_xy()
         cx = rx + rect.get_width() / 2.0
@@ -215,7 +256,7 @@ class Sheet:
         ax.annotate(f'neumes: {index}', (cx, cy), color='green', weight='bold', fontsize=16, ha='center', va='center')
       
       for index, nb in enumerate(self.neumes_baselines):
-        rect = patches.Rectangle((10, nb.lyrics.lb), self.master.shape[0] - 10, nb.ub - nb.lyrics.lb, linewidth=2.5, edgecolor='orange', facecolor='none', label=f'{index}')
+        rect = patches.Rectangle((10, nb.lyrics.y), self.master.shape[0] - 10, 2.5, linewidth=2.5, edgecolor='orange', facecolor='none', label=f'{index}')
         ax.add_patch(rect)
         rx, ry = rect.get_xy()
         cx = rx + rect.get_width() / 2.0
