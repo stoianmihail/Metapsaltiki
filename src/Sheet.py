@@ -2,7 +2,7 @@ from turtle import right
 from pkg_resources import yield_lines
 import cv2
 import numpy as np
-from src.util import to_images
+from src.util import last_arg, to_images
 
 # Constants.
 kRatio = 3
@@ -159,6 +159,8 @@ class Sheet:
         assert fst_pos >= mid
 
         b2.set_lower_bound(fst_pos)
+        b1.set_upper_bound(fst_pos)
+
         while fst_pos >= b1.y and rhp[fst_pos] == 0:
           fst_pos -= 1
         fst_pos += 1
@@ -166,31 +168,25 @@ class Sheet:
         # TODO: take the smallest min before the greatest max (which shouldn't be the baseline itself)
         # For that, make sure that we take a local maximum, which is *at least* oligon_height apart from us.
 
+        # TODO: should we start directly with `b1.y + self.master.oligon_height` and then find the maxs?
+        # If so, pay attention to also add `b1.y + self.master.oligon_height`
         max_peaks = b1.y + self.get_max_peaks(rhp[b1.y : fst_pos])
-        min_peaks = b1.y + self.get_min_peaks(rhp[b1.y : fst_pos])
-        rightmost_max_index = max_peaks[len(max_peaks) - np.argmax(rhp[max_peaks][::-1]) - 1]
+        max_peaks = max_peaks[max_peaks > b1.y + self.master.oligon_height]
+        
+        print(f'! max={max_peaks}')
+        print(f'! rhp_max={rhp[max_peaks]}')
+        
+        rightmost_max_index = max_peaks[last_arg(max_peaks, np.argmax)]
+
+        # rightmost_min_before_max_index = min_peaks
         print(f'rightmost_max_index={rightmost_max_index}')
 
-        print(f'max_peaks={max_peaks}, values={rhp[max_peaks]}')
-        print(f'min_peaks={min_peaks}, values={rhp[min_peaks]}')
+        safe_start_position = b1.y + self.master.oligon_height
+        rightmost_min_index = safe_start_position + last_arg(rhp[safe_start_position : rightmost_max_index], np.argmin)
 
-        min_peaks = min_peaks[min_peaks > b1.y + self.master.oligon_height]
-        max_peaks = max_peaks[max_peaks > b1.y + self.master.oligon_height]
-        print(f'! max={max_peaks}')
-        print(f'! min={min_peaks}')
-        print(f'! rhp_max={rhp[max_peaks]}')
-        print(f'! rhp_min={rhp[min_peaks]}')
+        print(f'rm_min_index={rightmost_min_index}')
 
-
-        aux_max_peaks = self.get_max_peaks(rhp[max_peaks])
-        aux_min_peaks = self.get_min_peaks(rhp[min_peaks])
-        print(f'max_aux={aux_max_peaks}, min_aux={aux_min_peaks}')
-
-        snd_pos = b1.y + np.argmin(rhp[b1.y : fst_pos])
-
-        print(f'snd_pos={snd_pos}')
-
-        b1.lyrics.set_lower_bound(snd_pos)
+        b1.lyrics.set_lower_bound(rightmost_min_index)
 
       for i in range(1, len(self.neumes_baselines)):
         interpolate(self.neumes_baselines[i - 1], self.neumes_baselines[i])

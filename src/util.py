@@ -1,4 +1,5 @@
 from PIL import Image
+import numpy as np
 
 def to_images(file_path):
   import fitz
@@ -10,3 +11,6 @@ def to_images(file_path):
     img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
     images.append(img)
   return images
+
+def last_arg(xs, fn):
+  return len(xs) - fn(xs[::-1]) - 1
