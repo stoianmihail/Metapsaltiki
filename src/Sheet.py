@@ -6,9 +6,34 @@ from src.util import last_arg, to_images
 
 # Constants.
 kRatio = 3
+kGap = 2
+
+# A point.
+class Point:
+  def __init__(self, x, y):
+    self.x = x
+    self.y = y
+
+class Segment:
+  def __init__(self, A, B):
+    self.A, self.B = A, B
+
+  # Return true if `this` segment intersects with `other` segment.
+  def intersects(self, other):
+    def ccw(A,B,C):
+      return (C.y-A.y) * (B.x-A.x) > (B.y-A.y) * (C.x-A.x)
+    return ccw(self.A, other.A, other.B) != ccw(self.B, other.A, other.B) and ccw(self.A, self.B, other.A) != ccw(self.A, self.B, other.B)
+
+# A connected component.
+class ConnectedComponent:
+  def __init__(self, x, y, w, h, a):
+    self.x, self.y, self.w, self.h, self.a = x, y, w, h, a
+
+  def __str__(self):
+    return f'x={self.x}, y={self.y}, w={self.w}, h={self.h}'
 
 class Sheet:
-  # Page class.
+  # A page.
   class Page:
     # Baseline:
     class Baseline:
@@ -19,23 +44,119 @@ class Sheet:
         def set_coordinate(self, y):
           self.y = y
 
-        # TODO: avoid duplicate code -> use inheritance!
-        def set_lower_bound(self, lb):
-          self.lb = lb
+        # def fetch_initial_text(self):
+        #   for i, cc in enumerate(self.master.master.ccs):
 
-      def __init__(self, master, y):
+        
+        # TODO: avoid duplicate code -> use inheritance!
+
+      # Baseline constructor.
+      def __init__(self, master, index, y):
         self.master = master
+        self.index = index
         self.y = y
         self.lyrics = self.Lyrics(self)
 
       def __str__(self):
         return f'y = {self.y}'
 
-      def set_lower_bound(self, lb):
-        self.lb = lb
+      @staticmethod
+      def distance(n1, n2):
+        # Is `n2` below `n1`?
+        if n1.y < n2.y:
+          return min(abs(n1.y - n2.y), abs(n1.y + n1.h - n2.y))
+        else:
+          return min(abs(n2.y - n1.y), abs(n2.y + n2.h - n1.y))
 
-      def set_upper_bound(self, ub):
-        self.ub = ub
+      @staticmethod
+      def intersection(s1, s2):
+        return max(s1[0], s2[0]) <= min(s1[1], s2[1])
+
+      def fetch_touching_neumes(self):        
+        def touches(cc):
+          s1 = (self.y - self.master.master.oligon_height, self.y + self.master.master.oligon_height)
+          s2 = (cc.y, cc.y + cc.h)
+          return self.intersection(s1, s2)
+
+        # Determine neumes touching the baseline.
+        self.touching_neumes = []
+        for i, cc in enumerate(self.master.ccs):
+          if touches(cc):
+            self.touching_neumes.append(i)
+
+      def fetch_final_neumes(self):
+        prev, next = None, None
+        if self.index:
+          prev = self.master.neumes_baselines[self.index - 1]
+          print(f'prev={prev}')
+        if self.index + 1 != len(self.master.neumes_baselines):
+          next = self.master.neumes_baselines[self.index + 1]
+          print(f'next={next}')
+
+        def projection_intersection(n1, n2):
+          s1, s2 = (n1.x, n1.x + n1.w), (n2.x, n2.x + n2.w)
+          return self.intersection(s1, s2)
+
+        def is_below_baseline(cc):
+          return self.y < cc.y + cc.h
+
+        # Check if `n2` is below `n1`.
+        def is_below_neume(n1, n2):
+          return (n2.y > n1.y) and projection_intersection(n1, n2)
+
+        def is_above_baseline(cc):
+          return cc.y < self.y
+
+        # Check if `n2` is above `n1`.
+        def is_above_neume(n1, n2):
+          return (n2.y < n1.y) and projection_intersection(n1, n2)
+
+        def fetch(i):
+          return self.master.ccs[i]
+
+        prev_y, next_y = 0, self.master.height
+        if prev is not None:
+          prev_y = prev.y
+        if next is not None:
+          next_y = next.y
+
+        # Second iteration
+        self.suspended_neumes = []
+        for i, cc in enumerate(self.master.ccs):
+          # Already taken by us?
+          if i in self.touching_neumes:
+            continue
+
+          # Already taken by `prev`?
+          if prev is not None and (i in prev.touching_neumes):
+            continue
+
+          # Already taken by `next`?
+          if next is not None and (i in next.touching_neumes):
+            continue
+
+          # Not in our range?
+          if (cc.y < prev_y) or (next_y < cc.y):
+            continue
+
+          # Is it below us?
+          if is_below_baseline(cc):
+            # print(f'cc={cc} is below')
+            for j in self.touching_neumes:
+              if is_below_neume(fetch(j), cc) and (self.distance(fetch(j), cc) < kGap * self.master.master.oligon_height):
+                self.suspended_neumes.append(i)
+                break
+
+          # Is it above us?
+          if is_above_baseline(cc):
+            # print(f'cc={cc} is above')
+            for j in self.touching_neumes:
+              if is_above_neume(fetch(j), cc) and (self.distance(fetch(j), cc) < kGap * self.master.master.oligon_height):
+                self.suspended_neumes.append(i)
+                break
+
+        # Build the final neumes list.
+        self.neumes = self.touching_neumes + self.suspended_neumes
 
     # Constructor.
     def __init__(self, master, image):
@@ -46,20 +167,23 @@ class Sheet:
 
       self.thresh = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV | cv2.THRESH_OTSU)[1]
       output = cv2.connectedComponentsWithStats(self.thresh, 8, cv2.CV_32S)
-      (_, _, self.ccs, self.centroids) = output
+      (_, _, tmp, self.centroids) = output
+      self.ccs = []
+      for (x, y, w, h, a) in tmp:
+        self.ccs.append(ConnectedComponent(x, y, w, h, a))
 
     # Compute the horizontal projection of connected components with `w / h` < `ratio`. 
     def compute_horizontal_projection(self, ratio=kRatio):
       hs = np.zeros(self.master.shape[1] + 1)
 
-      def collect_horizontal_runlengths(x, y, w, h):
-        for y_ in range(y, y + h):
-          hs[y_] += np.count_nonzero(self.thresh[y_][x : x + w] == 255)
+      def collect_horizontal_runlengths(cc):
+        for y_ in range(cc.y, cc.y + cc.h):
+          hs[y_] += np.count_nonzero(self.thresh[y_][cc.x : cc.x + cc.w] == 255)
 
-      for (x, y, w, h, _) in self.ccs:
-        if w / h < ratio:
+      for cc in self.ccs:
+        if cc.w / cc.h < ratio:
           continue
-        collect_horizontal_runlengths(x, y, w, h)
+        collect_horizontal_runlengths(cc)
       hs /= self.master.oligon_width
       return hs
 
@@ -107,8 +231,8 @@ class Sheet:
 
       # Reigster all baselines.
       self.neumes_baselines = []
-      for nb in new_peaks:
-        self.neumes_baselines.append(self.Baseline(self, nb))
+      for index, nb in enumerate(new_peaks):
+        self.neumes_baselines.append(self.Baseline(self, index, nb))
       return
 
     # Plot the baselines.
@@ -162,7 +286,7 @@ class Sheet:
       # Compute the raw horizontal projection.
       rhp = self.compute_raw_horizontal_projection()
 
-      print([str(nb) for nb in self.neumes_baselines])
+      # print([str(nb) for nb in self.neumes_baselines])
 
       # def interpolate(b1, b2):
       #   print(f'b1={str(b1)}')
@@ -211,20 +335,20 @@ class Sheet:
         mask = (b1.y + self.master.oligon_height <= max_peaks) & (max_peaks <= mid)
         max_peaks = max_peaks[mask]
 
-        print(f'b1.y={b1.y}, b2.y={b2.y}, mid={mid}, max_peaks={max_peaks}, values={rhp[max_peaks]}')
+        # print(f'b1.y={b1.y}, b2.y={b2.y}, mid={mid}, max_peaks={max_peaks}, values={rhp[max_peaks]}')
         ind = np.argpartition(rhp[max_peaks], -2)[-2:]
-        print(f'ind={ind}')
+        # print(f'ind={ind}')
 
         # TODO: what if `len(ind) == 1`?
         assert len(ind) == 2
         max1, max2 = max_peaks[ind]
 
-        print(f'max1={max1}, max2={max2}')
+        # print(f'max1={max1}, max2={max2}')
         b1.lyrics.set_coordinate(max1 + (max2 - max1) / 2)
         
       # TODO: could go wrong, when the end of sentence is really short!
       # TODO: and we also have page numbers.
-      self.neumes_baselines.append(self.Baseline(self, self.height))
+      self.neumes_baselines.append(self.Baseline(self, 0, self.height))
       for i in range(1, len(self.neumes_baselines)):
         find_lyrics(self.neumes_baselines[i - 1], self.neumes_baselines[i])
       self.neumes_baselines.pop()
@@ -263,6 +387,50 @@ class Sheet:
         cy = ry + rect.get_height() / 2.0
         ax.annotate(f'lyrics: {index}', (cx, cy), color='green', weight='bold', fontsize=16, ha='center', va='center')
       plt.show()
+
+    def map_neumes(self):
+      # Compute the baselines.
+      self.compute_full_baselines()
+
+      # And fetch the neumes.
+      for nb in self.neumes_baselines:
+        nb.fetch_touching_neumes()
+      for nb in self.neumes_baselines:
+        nb.fetch_final_neumes()
+
+    def plot_mapped_neumes(self):
+      import matplotlib.pyplot as plt
+      import matplotlib.patches as patches
+
+      # Create figure and axes
+      fig, ax = plt.subplots(figsize=(self.height / 10, self.width / 10))
+
+      # Display the image
+      ax.imshow(self.image)
+
+      self.map_neumes()
+      for index, nb in enumerate(self.neumes_baselines):
+        rect = patches.Rectangle((0, nb.y), self.master.shape[0], 2.5, linewidth=2.5, edgecolor='purple', facecolor='none', label=f'{index}')
+        ax.add_patch(rect)
+        rx, ry = rect.get_xy()
+        cx = rx + rect.get_width() / 2.0
+        cy = ry + rect.get_height() / 2.0
+        # ax.annotate(f'neumes: {index}', (cx, cy), color='green', weight='bold', fontsize=16, ha='center', va='center')
+        for ptr in nb.neumes:
+          cc = self.ccs[ptr]
+          nr = patches.Rectangle((cc.x, cc.y), cc.w, cc.h, linewidth=2, edgecolor='blue', facecolor='none')
+          ax.add_patch(nr)
+      plt.show()
+
+      # for index, nb in enumerate(self.neumes_baselines):
+      #   rect = patches.Rectangle((10, nb.lyrics.y), self.master.shape[0] - 10, 2.5, linewidth=2.5, edgecolor='orange', facecolor='none', label=f'{index}')
+      #   ax.add_patch(rect)
+      #   rx, ry = rect.get_xy()
+      #   cx = rx + rect.get_width() / 2.0
+      #   cy = ry + rect.get_height() / 2.0
+      #   ax.annotate(f'lyrics: {index}', (cx, cy), color='green', weight='bold', fontsize=16, ha='center', va='center')
+      # plt.show()
+
 
     # Compute zero ranges.
     def compute_zero_ranges(self):
@@ -338,12 +506,12 @@ class Sheet:
 
       # Create a Rectangle patch
       max_x, max_y = 0, 0
-      for index, (x, y, w, h, a) in enumerate(self.ccs):
-        if w / h < ratio:
+      for index, cc in enumerate(self.ccs):
+        if cc.w / cc.h < ratio:
           continue
-        max_x = max(max_x, x + w)
-        max_y = max(max_y, y + h)
-        rect = patches.Rectangle((x, y), w, h, linewidth=1, edgecolor='r', facecolor='none', label=f'{index}')
+        max_x = max(max_x, cc.x + cc.w)
+        max_y = max(max_y, cc.y + cc.h)
+        rect = patches.Rectangle((cc.x, cc.y), cc.w, cc.h, linewidth=1, edgecolor='r', facecolor='none', label=f'{index}')
         ax.add_patch(rect)
         rx, ry = rect.get_xy()
         cx = rx + rect.get_width() / 2.0
@@ -368,10 +536,10 @@ class Sheet:
   def compute_oligon_width(self, ratio=kRatio):
     ws = [0] * (self.shape[0] + 1)
     for p in self.pages:
-      for (_, _, w, h, _) in p.ccs:
-        if w / h < ratio:
+      for cc in p.ccs:
+        if cc.w / cc.h < ratio:
           continue
-        ws[w] += 1
+        ws[cc.w] += 1
     total = sum(ws)
     curr = 0
     for i in range(1, self.shape[0] + 1):
@@ -383,10 +551,10 @@ class Sheet:
   def compute_oligon_height(self, ratio=kRatio):
     hs = [0] * (self.shape[1] + 1)
     
-    def collect_vertical_runlengths(p, x, y, w, h):
-      for x_ in range(x, x + w):
+    def collect_vertical_runlengths(p, cc):
+      for x_ in range(cc.x, cc.x + cc.w):
         sum = 0
-        for y_ in range(y, y + h):
+        for y_ in range(cc.y, cc.y + cc.h):
           bit = int(p.thresh[y_][x_] == 255)
           if bit == 1:
             sum += 1
@@ -396,10 +564,10 @@ class Sheet:
         hs[sum] += 1
 
     for p in self.pages:
-      for (x, y, w, h, _) in p.ccs:
-        if w / h < ratio:
+      for cc in p.ccs:
+        if cc.w / cc.h < ratio:
           continue
-        collect_vertical_runlengths(p, x, y, w, h)
+        collect_vertical_runlengths(p, cc)
         
     max_freq = 0
     oligon_height = None
