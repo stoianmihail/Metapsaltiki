@@ -8,22 +8,6 @@ from src.util import last_arg, to_images
 kRatio = 3
 kGap = 2
 
-# A point.
-class Point:
-  def __init__(self, x, y):
-    self.x = x
-    self.y = y
-
-class Segment:
-  def __init__(self, A, B):
-    self.A, self.B = A, B
-
-  # Return true if `this` segment intersects with `other` segment.
-  def intersects(self, other):
-    def ccw(A,B,C):
-      return (C.y-A.y) * (B.x-A.x) > (B.y-A.y) * (C.x-A.x)
-    return ccw(self.A, other.A, other.B) != ccw(self.B, other.A, other.B) and ccw(self.A, self.B, other.A) != ccw(self.A, self.B, other.B)
-
 # A connected component.
 class ConnectedComponent:
   def __init__(self, x, y, w, h, a):
@@ -166,7 +150,7 @@ class Sheet:
         # Build the final neumes list.
         self.neumes = self.touching_neumes + self.suspended_neumes
 
-    # Constructor.
+    # Page constructor.
     def __init__(self, master, image):
       self.master = master
       self.image = image
