@@ -44,9 +44,8 @@ class Sheet:
         def set_coordinate(self, y):
           self.y = y
 
-        # def fetch_initial_text(self):
-        #   for i, cc in enumerate(self.master.master.ccs):
-
+        def fetch_initial_text(self):
+          self.text = self.master.get_intersecting_ccs(self.y)
         
         # TODO: avoid duplicate code -> use inheritance!
 
@@ -72,17 +71,22 @@ class Sheet:
       def intersection(s1, s2):
         return max(s1[0], s2[0]) <= min(s1[1], s2[1])
 
-      def fetch_touching_neumes(self):        
+      def get_intersecting_ccs(self, y_target):
         def touches(cc):
-          s1 = (self.y - self.master.master.oligon_height, self.y + self.master.master.oligon_height)
+          s1 = (y_target - self.master.master.oligon_height, y_target + self.master.master.oligon_height)
           s2 = (cc.y, cc.y + cc.h)
           return self.intersection(s1, s2)
 
         # Determine neumes touching the baseline.
-        self.touching_neumes = []
+        ns = []
         for i, cc in enumerate(self.master.ccs):
           if touches(cc):
-            self.touching_neumes.append(i)
+            ns.append(i)
+        return ns
+
+      def fetch_touching_neumes(self):
+        self.lyrics.fetch_initial_text()
+        self.touching_neumes = [x for x in self.get_intersecting_ccs(self.y) if x not in self.lyrics.text]
 
       def fetch_final_neumes(self):
         prev, next = None, None
@@ -125,6 +129,10 @@ class Sheet:
         for i, cc in enumerate(self.master.ccs):
           # Already taken by us?
           if i in self.touching_neumes:
+            continue
+
+          # Already taken by our lyrics?
+          if i in self.lyrics.text:
             continue
 
           # Already taken by `prev`?
