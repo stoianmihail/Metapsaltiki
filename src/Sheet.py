@@ -1,7 +1,7 @@
-from turtle import right
-from pkg_resources import yield_lines
-import cv2
+import matplotlib.pyplot as plt
+import matplotlib.patches as patches
 import numpy as np
+import cv2
 from src.util import last_arg, to_images
 
 # Constants.
@@ -159,6 +159,9 @@ class Sheet:
 
       self.thresh = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV | cv2.THRESH_OTSU)[1]
       output = cv2.connectedComponentsWithStats(self.thresh, 8, cv2.CV_32S)
+
+      self.contours = cv2.findContours(self.thresh, cv2.RETR_LIST, cv2.CHAIN_APPROX_NONE)[0]
+
       (_, _, tmp, self.centroids) = output
       self.ccs = []
       for (x, y, w, h, a) in tmp:
@@ -229,9 +232,6 @@ class Sheet:
 
     # Plot the baselines.
     def plot_neumes_baselines(self):
-      import matplotlib.pyplot as plt
-      import matplotlib.patches as patches
-
       # Create figure and axes
       fig, ax = plt.subplots(figsize=(self.height / 10, self.width / 10))
 
@@ -248,13 +248,12 @@ class Sheet:
         ax.annotate(f'{index}', (cx, cy), color='green', weight='bold', fontsize=16, ha='center', va='center')
       plt.show()
 
-    # Compute the horizontal projetion, by considering all connected componets.
+    # Compute the horizontal projection, by considering all connected componets.
     def compute_raw_horizontal_projection(self):
       return np.sum(self.thresh, axis=1) / 255
       
     # Plot the horizontal projetion, by considering all connected componets.
     def plot_raw_horizontal_projection(self):
-      import matplotlib.pyplot as plt
       f = plt.figure()
       f.set_figwidth(50)
       f.set_figheight(10)
@@ -353,9 +352,6 @@ class Sheet:
       # self.neumes_baselines[-1].lyrics.set_lower_bound(self.height)
 
     def plot_full_baselines(self):
-      import matplotlib.pyplot as plt
-      import matplotlib.patches as patches
-
       # Create figure and axes
       fig, ax = plt.subplots(figsize=(self.height / 10, self.width / 10))
 
@@ -391,9 +387,6 @@ class Sheet:
         nb.fetch_final_neumes()
 
     def plot_mapped_neumes(self):
-      import matplotlib.pyplot as plt
-      import matplotlib.patches as patches
-
       # Create figure and axes
       fig, ax = plt.subplots(figsize=(self.height / 10, self.width / 10))
 
@@ -454,7 +447,6 @@ class Sheet:
       return ranges   
 
     def plot_horizontal_projection(self, ratio=kRatio):
-      import matplotlib.pyplot as plt
       f = plt.figure()
       f.set_figwidth(50)
       f.set_figheight(10)
@@ -466,9 +458,6 @@ class Sheet:
       plt.plot(hs, color='black')
 
     def plot_ranges(self):
-      import matplotlib.pyplot as plt
-      import matplotlib.patches as patches
-
       # Create figure and axes
       fig, ax = plt.subplots(figsize=(self.height / 10, self.width / 10))
 
@@ -487,9 +476,28 @@ class Sheet:
 
     # Plot the page with all its connected components (could be filtered).
     def plot_ccs(self, ratio=kRatio):
-      import matplotlib.pyplot as plt
-      import matplotlib.patches as patches
+      # Create figure and axes
+      fig, ax = plt.subplots(figsize=(self.height / 10, self.width / 10))
 
+      # Display the image
+      ax.imshow(self.image)
+
+      # Create a Rectangle patch
+      max_x, max_y = 0, 0
+      for index, cc in enumerate(self.ccs):
+        if cc.w / cc.h < ratio:
+          continue
+        max_x = max(max_x, cc.x + cc.w)
+        max_y = max(max_y, cc.y + cc.h)
+        rect = patches.Rectangle((cc.x, cc.y), cc.w, cc.h, linewidth=1, edgecolor='r', facecolor='none', label=f'{index}')
+        ax.add_patch(rect)
+        rx, ry = rect.get_xy()
+        cx = rx + rect.get_width() / 2.0
+        cy = ry + rect.get_height() / 2.0
+        ax.annotate(f'{index}', (cx, cy), color='green', weight='bold', fontsize=16, ha='center', va='center')
+      plt.show()
+
+    def plot_contours(self, ratio=kRatio):
       # Create figure and axes
       fig, ax = plt.subplots(figsize=(self.height / 10, self.width / 10))
 
