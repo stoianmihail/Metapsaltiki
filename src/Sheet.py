@@ -1,6 +1,8 @@
+from turtle import right
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 import numpy as np
+import math
 import cv2
 from src.util import last_arg, to_images
 
@@ -10,11 +12,38 @@ kGap = 2
 
 # A connected component.
 class ConnectedComponent:
-  def __init__(self, x, y, w, h, a):
+  def __init__(self, master, index, x, y, w, h, a):
+    self.master = master
+    self.index = index
     self.x, self.y, self.w, self.h, self.a = x, y, w, h, a
+    self.beta = math.atan2(h, w) * 180 / math.pi
+    self.compute_rotation_angle()
 
   def __str__(self):
-    return f'x={self.x}, y={self.y}, w={self.w}, h={self.h}'
+    return f'x={self.x}, y={self.y}, w={self.w}, h={self.h}, alfa={self.angle}'
+
+  def compute_rotation_angle(self):
+    # Find all the contours in the thresholded image
+    contours = cv2.findContours(self.master.thresh[self.y : self.y + self.h, self.x : self.x + self.w], cv2.RETR_LIST, cv2.CHAIN_APPROX_NONE)[0]
+
+    # Fetch the biggest contour.
+    c = contours[np.argmax(np.asarray([cv2.contourArea(c) for c in contours]))]
+
+    # Retain the largest neume.
+    self.clone = np.zeros(self.master.thresh[self.y : self.y + self.h, self.x : self.x + self.w].shape)
+    cv2.fillPoly(self.clone, pts=[c], color=255)
+
+    # Get the rotated rectangle.
+    rect = cv2.minAreaRect(c)
+    width = int(rect[1][0])
+    height = int(rect[1][1])
+    self.alfa = int(rect[2])
+
+    # Determine the angle.
+    if width < height:
+      self.alfa = 90 - self.alfa
+    else:
+      self.alfa = -self.alfa
 
 class Sheet:
   # A page.
@@ -158,14 +187,38 @@ class Sheet:
       self.height, self.width = gray.shape
 
       self.thresh = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV | cv2.THRESH_OTSU)[1]
-      output = cv2.connectedComponentsWithStats(self.thresh, 8, cv2.CV_32S)
+      output = cv2.connectedComponentsWithStats(self.thresh, 8, cv2.CV_32S)[2]
 
-      self.contours = cv2.findContours(self.thresh, cv2.RETR_LIST, cv2.CHAIN_APPROX_NONE)[0]
+      # contours = cv2.findContours(self.thresh, cv2.RETR_LIST, cv2.CHAIN_APPROX_NONE)[0]
 
-      (_, _, tmp, self.centroids) = output
       self.ccs = []
-      for (x, y, w, h, a) in tmp:
-        self.ccs.append(ConnectedComponent(x, y, w, h, a))
+      for (x, y, w, h, a) in output[1:]:
+        self.ccs.append(ConnectedComponent(self, len(self.ccs), x, y, w, h, a))
+
+      # self.ccs = []
+      # for c in contours:
+      #   # # Calculate the area of each contour
+      #   # area = cv2.contourArea(c)
+      
+      #   # Determine the corners.
+      #   left_corner = np.min(c, axis=0)[0]
+      #   right_corner = np.max(c, axis=0)[0]
+
+      #   x, y = left_corner[0], left_corner[1]
+      #   w, h = right_corner[0] - left_corner[0], right_corner[1] - left_corner[1]
+
+      #   # Reject invalid objects.
+      #   if not w or not h:
+      #     continue
+
+      #   # `rect` = (center(x, y), (width, height), angle of rotation)
+      #   rect = cv2.minAreaRect(c)
+
+      #   # Append the new connected component.
+      #   self.ccs.append(ConnectedComponent(x, y, w, h, rect))
+
+      # print(f'output={len(output[2])}, ccs={len(self.ccs)}')
+
 
     # Compute the horizontal projection of connected components with `w / h` < `ratio`. 
     def compute_horizontal_projection(self, ratio=kRatio):
@@ -494,29 +547,29 @@ class Sheet:
         rx, ry = rect.get_xy()
         cx = rx + rect.get_width() / 2.0
         cy = ry + rect.get_height() / 2.0
-        ax.annotate(f'{index}', (cx, cy), color='green', weight='bold', fontsize=16, ha='center', va='center')
+        ax.annotate(f'({"{:.2f}".format(cc.alfa)}, {"{:.2f}".format(cc.beta)})', (cx, cy), color='green', weight='bold', fontsize=16, ha='center', va='center')
       plt.show()
 
-    def plot_contours(self, ratio=kRatio):
+    def plot_neumes_distribution(self, lb=0, ub=kRatio):
+      from matplotlib.offsetbox import OffsetImage, AnnotationBbox
+
       # Create figure and axes
-      fig, ax = plt.subplots(figsize=(self.height / 10, self.width / 10))
+      fig, ax = plt.subplots(figsize=(20, 20))
 
-      # Display the image
-      ax.imshow(self.image)
-
-      # Create a Rectangle patch
-      max_x, max_y = 0, 0
-      for index, cc in enumerate(self.ccs):
-        if cc.w / cc.h < ratio:
-          continue
-        max_x = max(max_x, cc.x + cc.w)
-        max_y = max(max_y, cc.y + cc.h)
-        rect = patches.Rectangle((cc.x, cc.y), cc.w, cc.h, linewidth=1, edgecolor='r', facecolor='none', label=f'{index}')
-        ax.add_patch(rect)
-        rx, ry = rect.get_xy()
-        cx = rx + rect.get_width() / 2.0
-        cy = ry + rect.get_height() / 2.0
-        ax.annotate(f'{index}', (cx, cy), color='green', weight='bold', fontsize=16, ha='center', va='center')
+      coords = []
+      self.map_neumes()
+      for nb in self.neumes_baselines:
+        for n in nb.neumes:
+          cc = self.ccs[n]
+          if cc.w / cc.h < lb or ub < cc.w / cc.h:
+            continue
+          
+          im = OffsetImage(255 - cc.clone, zoom=1.5, cmap='gray')
+          ab = AnnotationBbox(im, (cc.alfa, cc.beta), xycoords='data', frameon=False)
+          coords.append((cc.alfa, cc.beta))
+          ax.add_artist(ab)
+      ax.update_datalim(coords)
+      ax.autoscale()
       plt.show()
 
   # Sheet constructor.
@@ -580,3 +633,26 @@ class Sheet:
 
   def __getitem__(self, key):
       return self.pages[key]
+
+  # def plot_neumes_distribution(self, lb=0, ub=kRatio):
+  #   from matplotlib.offsetbox import OffsetImage, AnnotationBbox
+
+  #   # Create figure and axes
+  #   fig, ax = plt.subplots(figsize=(20, 20))
+
+  #   coords = []
+  #   for p in self.pages:
+  #     p.map_neumes()
+  #     for nb in p.neumes_baselines:
+  #       for n in nb.neumes:
+  #         cc = p.ccs[n]
+  #         if cc.w / cc.h < lb or ub < cc.w / cc.h:
+  #           continue
+          
+  #         im = OffsetImage(255 - cc.clone, zoom=1.0, cmap='gray')
+  #         ab = AnnotationBbox(im, (cc.alfa, cc.beta), xycoords='data', frameon=False)
+  #         coords.append((cc.alfa, cc.beta))
+  #         ax.add_artist(ab)
+  #   ax.update_datalim(coords)
+  #   ax.autoscale()
+  #   plt.show()
